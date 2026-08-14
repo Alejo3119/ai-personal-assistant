@@ -4,3 +4,4 @@ python-telegram-bot[job-queue]
 python-dotenv
 requests
 numpy
+mcp[cli]

@@ -4,7 +4,7 @@ Un asistente conversacional personal, accesible por Telegram, con memoria persis
 
 > **Nota:** proyecto desarrollado con asistencia de IA (Claude, de Anthropic).
 
-## Estado actual: V6 — Arquitectura multi-agente
+## Estado actual: V7 — Servidor MCP
 
 - Bot de Telegram como interfaz (sin frontend propio).
 - Memoria persistente por chat en SQLite (recuerda la conversación entre mensajes y reinicios del bot).
@@ -15,6 +15,7 @@ Un asistente conversacional personal, accesible por Telegram, con memoria persis
   - `generate_image` — genera y envía una imagen (Pollinations.ai, sin API key) a partir de una descripción.
   - `search_notes` — RAG sobre archivos propios (`documents/*.md`, `*.txt`): busca por similitud semántica usando embeddings locales de Ollama (`nomic-embed-text`) guardados en SQLite, sin base de datos vectorial externa.
 - **Arquitectura multi-agente** (`agents.py`): un orquestador recibe cada mensaje y decide si lo responde directamente (charla general) o lo delega a un agente especializado (clima, recordatorios, imágenes, notas), cada uno con su propio system prompt enfocado y acceso *solo* a su propia tool. Reusa el mismo loop de tool-calling de `llm_client.py`, generalizado para aceptar system prompt / tools / executor por agente.
+- **Servidor MCP** (`mcp_server.py`): expone `get_weather`, `search_notes` y `generate_image` como un servidor [MCP](https://modelcontextprotocol.io) real (protocolo estándar, transporte stdio), para que cualquier cliente MCP (Claude Desktop, Claude Code, etc.) las use directamente — no solo el bot de Telegram. `set_reminder` no se expone acá porque depende del `job_queue` de un chat de Telegram especifico, que no existe fuera de ese contexto; `generate_image` devuelve la URL de la imagen en vez de enviarla, porque acá no hay chat al que mandarla.
 
 Nota sobre offline: el modelo local (Ollama) corre sin internet, pero Telegram es un servicio en la nube — la interfaz del bot y las tools de clima/imágenes sí necesitan conexión. `search_notes` sí funciona 100% offline si `LLM_PROVIDER=ollama` (embeddings y modelo, ambos locales).
 
@@ -52,6 +53,27 @@ Conclusión práctica: la arquitectura multi-agente (orquestador + especialistas
 
 Poné tus propios archivos `.md` o `.txt` en la carpeta `documents/` (se crea sola, y está en `.gitignore` — tus notas nunca se suben al repo). Se indexan automáticamente cada vez que arranca el bot.
 
+## Servidor MCP
+
+Probarlo standalone (lanza el servidor como subproceso y llama a sus tools por el protocolo real):
+
+```bash
+python test_mcp_client.py
+```
+
+Para usarlo desde Claude Desktop, agregar en su config (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "asistente-personal": {
+      "command": "C:\\ruta\\a\\este\\repo\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\ruta\\a\\este\\repo\\mcp_server.py"]
+    }
+  }
+}
+```
+
 ## Cómo correrlo
 
 1. Crear un bot con [@BotFather](https://t.me/BotFather) en Telegram y copiar el token.
@@ -65,18 +87,13 @@ Poné tus propios archivos `.md` o `.txt` en la carpeta `documents/` (se crea so
    ```
 5. Escribirle al bot por Telegram.
 
-## Hoja de ruta / próximas etapas
-
-Este proyecto está pensado para crecer por versiones, cada una funcional antes de pasar a la siguiente:
-
-- **V7 — MCP**: exponer las tools como servidor MCP (Model Context Protocol) para que otros clientes MCP puedan usarlas.
-
 ## Stack
 
 - Python 3.11
 - [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot)
-- [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-python) / [Ollama](https://ollama.com) (modelo local)
-- SQLite (memoria persistente)
+- [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-python) / [OpenAI SDK](https://github.com/openai/openai-python) / [Ollama](https://ollama.com) (modelo local)
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+- SQLite (memoria persistente + índice RAG)
 
 ## Licencia
 
