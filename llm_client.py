@@ -1,7 +1,11 @@
 """
 Capa de abstraccion sobre el proveedor de IA, con soporte de tools (function calling).
-Permite cambiar entre Anthropic (API paga) y Ollama (modelo local, gratis)
-sin tocar el resto del bot. Se elige con la variable de entorno LLM_PROVIDER.
+Permite cambiar entre Anthropic, OpenAI y Ollama (modelo local, gratis) sin tocar el
+resto del bot. Se elige con la variable de entorno LLM_PROVIDER.
+
+generate_response() acepta un system_prompt, una lista de tools y un executor
+personalizados (con los de V1-V5 como default) para poder reusar este mismo loop
+de tool-calling en agentes especializados (V6, ver agents.py).
 """
 
 import json
@@ -17,28 +21,31 @@ MAX_TOOL_ITERATIONS = 5
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = (
-    "Sos un asistente personal util y directo. Respondes en espanol, "
-    "de forma breve y clara, como si fueras un ayudante de confianza. "
-    "Cuando sea util, usa las herramientas disponibles (por ejemplo para "
-    "consultar el clima o programar un recordatorio) en vez de inventar la respuesta. "
+TOOL_RESULT_RULES = (
     "Cuando una herramienta te devuelva un resultado, usa EXACTAMENTE esos datos y no "
     "agregues detalles que no esten ahi (por ejemplo, no inventes si esta soleado o "
     "nublado si la herramienta no lo dice). Nunca menciones tu fecha de corte de "
     "entrenamiento ni digas que tu informacion podria estar desactualizada cuando "
-    "acabas de usar una herramienta con datos en vivo. Si el usuario pide una imagen, "
-    "usa la herramienta generate_image: la imagen se le envia directamente al usuario, "
-    "vos no la ves, asi que no intentes describirla, solo confirma que la enviaste. "
-    "Si el usuario pregunta algo que podria estar en sus notas o documentos personales "
-    "(cosas sobre si mismo, sus proyectos, datos que no sabrias de otra forma), usa la "
-    "herramienta search_notes antes de responder que no sabes. Si search_notes devuelve "
-    "texto con informacion (no el mensaje de 'no se encontraron notas'), ESE texto es la "
-    "respuesta correcta: usalo directamente para responder, no digas que no tenes la "
+    "acabas de usar una herramienta con datos en vivo. Si una herramienta te devuelve "
+    "texto con informacion (no un mensaje de error o de 'no se encontro nada'), ESE "
+    "texto es la respuesta correcta: usalo directamente, no digas que no tenes la "
     "informacion cuando la herramienta te la acaba de dar."
 )
 
+SYSTEM_PROMPT = (
+    "Sos un asistente personal util y directo. Respondes en espanol, "
+    "de forma breve y clara, como si fueras un ayudante de confianza. "
+    "Cuando sea util, usa las herramientas disponibles en vez de inventar la respuesta. "
+    + TOOL_RESULT_RULES
+    + " Si el usuario pide una imagen, usa la herramienta generate_image: la imagen se "
+    "le envia directamente al usuario, vos no la ves, asi que no intentes describirla, "
+    "solo confirma que la enviaste. Si el usuario pregunta algo que podria estar en sus "
+    "notas o documentos personales, usa la herramienta search_notes antes de responder "
+    "que no sabes."
+)
 
-def _run_anthropic(history: list[dict], tool_ctx: dict | None) -> str:
+
+def _run_anthropic(history, tool_ctx, system_prompt, tool_defs, executor):
     from anthropic import Anthropic
 
     client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -48,8 +55,8 @@ def _run_anthropic(history: list[dict], tool_ctx: dict | None) -> str:
         response = client.messages.create(
             model="claude-sonnet-4-5",
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            tools=tools.to_anthropic_format(),
+            system=system_prompt,
+            tools=tools.to_anthropic_format(tool_defs),
             messages=messages,
         )
 
@@ -62,7 +69,7 @@ def _run_anthropic(history: list[dict], tool_ctx: dict | None) -> str:
         for block in response.content:
             if block.type == "tool_use":
                 logger.info("tool_call name=%s input=%s", block.name, block.input)
-                result = tools.execute_tool(block.name, block.input, tool_ctx or {})
+                result = executor(block.name, block.input, tool_ctx or {})
                 logger.info("tool_result=%s", result)
                 tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
         messages.append({"role": "user", "content": tool_results})
@@ -70,14 +77,14 @@ def _run_anthropic(history: list[dict], tool_ctx: dict | None) -> str:
     return "No pude completar la accion, intenta de nuevo."
 
 
-def _run_ollama(history: list[dict], tool_ctx: dict | None) -> str:
+def _run_ollama(history, tool_ctx, system_prompt, tool_defs, executor):
     model = os.environ.get("OLLAMA_MODEL", "llama3.2")
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(history)
+    messages = [{"role": "system", "content": system_prompt}] + list(history)
 
     for _ in range(MAX_TOOL_ITERATIONS):
         resp = requests.post(
             "http://localhost:11434/api/chat",
-            json={"model": model, "messages": messages, "tools": tools.to_openai_format(), "stream": False},
+            json={"model": model, "messages": messages, "tools": tools.to_openai_format(tool_defs), "stream": False},
             timeout=120,
         )
         resp.raise_for_status()
@@ -95,25 +102,25 @@ def _run_ollama(history: list[dict], tool_ctx: dict | None) -> str:
             if isinstance(args, str):
                 args = json.loads(args)
             logger.info("tool_call name=%s args=%s", fn["name"], args)
-            result = tools.execute_tool(fn["name"], args, tool_ctx or {})
+            result = executor(fn["name"], args, tool_ctx or {})
             logger.info("tool_result=%s", result)
             messages.append({"role": "tool", "content": result})
 
     return "No pude completar la accion, intenta de nuevo."
 
 
-def _run_openai(history: list[dict], tool_ctx: dict | None) -> str:
+def _run_openai(history, tool_ctx, system_prompt, tool_defs, executor):
     from openai import OpenAI
 
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(history)
+    messages = [{"role": "system", "content": system_prompt}] + list(history)
 
     for _ in range(MAX_TOOL_ITERATIONS):
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=tools.to_openai_format(),
+            tools=tools.to_openai_format(tool_defs),
         )
         message = response.choices[0].message
         logger.info("openai tool_calls=%s content=%r", message.tool_calls, message.content)
@@ -138,16 +145,19 @@ def _run_openai(history: list[dict], tool_ctx: dict | None) -> str:
         for tc in message.tool_calls:
             args = json.loads(tc.function.arguments)
             logger.info("tool_call name=%s args=%s", tc.function.name, args)
-            result = tools.execute_tool(tc.function.name, args, tool_ctx or {})
+            result = executor(tc.function.name, args, tool_ctx or {})
             logger.info("tool_result=%s", result)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     return "No pude completar la accion, intenta de nuevo."
 
 
-def generate_response(history: list[dict], tool_ctx: dict | None = None) -> str:
+def generate_response(history, tool_ctx=None, system_prompt=None, tool_defs=None, executor=None):
+    system_prompt = system_prompt or SYSTEM_PROMPT
+    executor = executor or tools.execute_tool
+
     if LLM_PROVIDER == "ollama":
-        return _run_ollama(history, tool_ctx)
+        return _run_ollama(history, tool_ctx, system_prompt, tool_defs, executor)
     if LLM_PROVIDER == "openai":
-        return _run_openai(history, tool_ctx)
-    return _run_anthropic(history, tool_ctx)
+        return _run_openai(history, tool_ctx, system_prompt, tool_defs, executor)
+    return _run_anthropic(history, tool_ctx, system_prompt, tool_defs, executor)

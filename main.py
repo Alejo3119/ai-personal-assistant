@@ -13,9 +13,10 @@ load_dotenv()  # debe correr antes de importar llm_client, que lee env vars al i
 from telegram import Update
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
+import agents
 import memory
 import rag
-from llm_client import generate_response, LLM_PROVIDER
+from llm_client import LLM_PROVIDER
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
@@ -53,7 +54,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tool_ctx = make_tool_ctx(chat_id, context)
 
     try:
-        reply_text = generate_response(history, tool_ctx=tool_ctx)
+        reply_text = agents.handle(history, tool_ctx)
     except Exception:
         logger.exception("Fallo llamando al proveedor de IA (%s)", LLM_PROVIDER)
         reply_text = "Tuve un problema para pensar la respuesta. Intenta de nuevo."

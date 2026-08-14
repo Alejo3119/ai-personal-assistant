@@ -58,18 +58,20 @@ TOOLS = [
 ]
 
 
-def to_anthropic_format():
+def to_anthropic_format(tool_list=None):
+    tool_list = tool_list if tool_list is not None else TOOLS
     return [
         {"name": t["name"], "description": t["description"], "input_schema": t["parameters"]}
-        for t in TOOLS
+        for t in tool_list
     ]
 
 
-def to_openai_format():
+def to_openai_format(tool_list=None):
     """Formato estandar de function calling que usan tanto OpenAI como Ollama."""
+    tool_list = tool_list if tool_list is not None else TOOLS
     return [
         {"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["parameters"]}}
-        for t in TOOLS
+        for t in tool_list
     ]
 
 

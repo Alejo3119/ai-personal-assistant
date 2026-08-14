@@ -4,7 +4,7 @@ Un asistente conversacional personal, accesible por Telegram, con memoria persis
 
 > **Nota:** proyecto desarrollado con asistencia de IA (Claude, de Anthropic).
 
-## Estado actual: V5 — Tools + imágenes + RAG
+## Estado actual: V6 — Arquitectura multi-agente
 
 - Bot de Telegram como interfaz (sin frontend propio).
 - Memoria persistente por chat en SQLite (recuerda la conversación entre mensajes y reinicios del bot).
@@ -14,6 +14,7 @@ Un asistente conversacional personal, accesible por Telegram, con memoria persis
   - `set_reminder` — recordatorio con entrega asíncrona real vía `job_queue` de Telegram, sin que el usuario vuelva a escribir.
   - `generate_image` — genera y envía una imagen (Pollinations.ai, sin API key) a partir de una descripción.
   - `search_notes` — RAG sobre archivos propios (`documents/*.md`, `*.txt`): busca por similitud semántica usando embeddings locales de Ollama (`nomic-embed-text`) guardados en SQLite, sin base de datos vectorial externa.
+- **Arquitectura multi-agente** (`agents.py`): un orquestador recibe cada mensaje y decide si lo responde directamente (charla general) o lo delega a un agente especializado (clima, recordatorios, imágenes, notas), cada uno con su propio system prompt enfocado y acceso *solo* a su propia tool. Reusa el mismo loop de tool-calling de `llm_client.py`, generalizado para aceptar system prompt / tools / executor por agente.
 
 Nota sobre offline: el modelo local (Ollama) corre sin internet, pero Telegram es un servicio en la nube — la interfaz del bot y las tools de clima/imágenes sí necesitan conexión. `search_notes` sí funciona 100% offline si `LLM_PROVIDER=ollama` (embeddings y modelo, ambos locales).
 
@@ -24,14 +25,28 @@ Telegram (usuario) ──▶ main.py (bot handler)
                               │
                               ├─▶ memory.py ──▶ SQLite (historial por chat_id)
                               │
-                              ├─▶ llm_client.py ──▶ Anthropic API  (LLM_PROVIDER=anthropic)
-                              │                 ├──▶ OpenAI API    (LLM_PROVIDER=openai)
-                              │                 └──▶ Ollama local  (LLM_PROVIDER=ollama)
-                              │                         │
-                              │                         ▼ (si el modelo pide una tool)
-                              └─▶ tools.py ──▶ Open-Meteo (clima) / job_queue (recordatorios) / Pollinations.ai (imagenes)
-                                            └──▶ rag.py ──▶ documents/*.md,*.txt + embeddings Ollama ──▶ SQLite
+                              └─▶ agents.py (orquestador)
+                                        │
+                                        ├─▶ responde directo (charla general)
+                                        │
+                                        └─▶ delegate ──▶ agente especialista (clima/recordatorios/imagenes/notas)
+                                                              │        (system prompt + tools propias)
+                                                              ▼
+                                        llm_client.py ──▶ Anthropic API  (LLM_PROVIDER=anthropic)
+                                                       ├──▶ OpenAI API    (LLM_PROVIDER=openai)
+                                                       └──▶ Ollama local  (LLM_PROVIDER=ollama)
+                                                              │
+                                                              ▼ (si el agente pide su tool)
+                                        tools.py ──▶ Open-Meteo / job_queue / Pollinations.ai / rag.py
 ```
+
+### Hallazgo de V6: confiabilidad de las cadenas multi-agente con modelos locales chicos
+
+Probando V6 en vivo con `llama3.1:8b` (local, vía Ollama) apareció algo interesante: la arquitectura funciona (el orquestador delega bien, el agente especialista llama a su tool correctamente, el dato real llega), pero el **relevo final** — el paso donde un agente tiene que tomar el resultado de una tool y convertirlo en una respuesta en lenguaje natural — falla de forma intermitente, y el fallo se puede mover a *cualquier* eslabón de la cadena (a veces el especialista, a veces el propio orquestador), incluso reforzando el prompt con reglas explícitas y ejemplos concretos.
+
+La causa más probable: modelos chicos como este tienen un sesgo de entrenamiento muy fuerte hacia responder "no tengo acceso a datos en tiempo real" ante preguntas de clima/hora/etc., y ese reflejo a veces gana incluso con el dato correcto ya en el contexto. Cada salto adicional en una cadena multi-agente es una nueva oportunidad para que ese reflejo se dispare — a diferencia del flujo de un solo agente (V1-V5), donde el mismo modelo respondió bien de forma consistente.
+
+Conclusión práctica: la arquitectura multi-agente (orquestador + especialistas) está bien diseñada y funciona; la confiabilidad del paso final depende del modelo usado. Queda pendiente confirmar si un modelo más grande (Claude, GPT-4o) elimina este problema — es la hipótesis más probable dado que ninguno de estos fallos apareció durante las pruebas de V1-V5 con el mismo modelo en un solo salto.
 
 ### Notas personales (RAG)
 
@@ -54,7 +69,6 @@ Poné tus propios archivos `.md` o `.txt` en la carpeta `documents/` (se crea so
 
 Este proyecto está pensado para crecer por versiones, cada una funcional antes de pasar a la siguiente:
 
-- **V6 — Multi-agente**: separar responsabilidades (recordatorios, clima, imágenes) en agentes especializados coordinados por un orquestador.
 - **V7 — MCP**: exponer las tools como servidor MCP (Model Context Protocol) para que otros clientes MCP puedan usarlas.
 
 ## Stack
