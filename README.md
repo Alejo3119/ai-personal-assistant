@@ -2,11 +2,14 @@
 
 Un asistente conversacional personal, accesible por Telegram, con memoria persistente entre sesiones. Pensado como proyecto de aprendizaje incremental: cada etapa agrega una capacidad real (proveedores de IA, herramientas/acciones, multi-agente, RAG, MCP) sobre una base que ya funciona de punta a punta.
 
-## Estado actual: V1 — Asistente base
+## Estado actual: V2 — Asistente con tools
 
 - Bot de Telegram como interfaz (sin frontend propio).
 - Memoria persistente por chat en SQLite (recuerda la conversación entre mensajes y reinicios del bot).
 - Capa de abstracción de proveedor de IA (`llm_client.py`): el mismo bot puede correr contra **Claude (Anthropic API)** o contra un **modelo Llama local vía Ollama**, sin costo, eligiendo con una variable de entorno.
+- **Tool calling real** (`tools.py`): el modelo decide por su cuenta cuándo consultar el clima (API de Open-Meteo, sin key) o programar un recordatorio (entrega asíncrona real vía `job_queue` de Telegram, sin que el usuario tenga que volver a escribir).
+
+Nota sobre offline: el modelo local (Ollama) corre sin internet, pero Telegram es un servicio en la nube — la interfaz del bot y la tool de clima sí necesitan conexión.
 
 ## Arquitectura
 
@@ -15,8 +18,11 @@ Telegram (usuario) ──▶ main.py (bot handler)
                               │
                               ├─▶ memory.py ──▶ SQLite (historial por chat_id)
                               │
-                              └─▶ llm_client.py ──▶ Anthropic API  (LLM_PROVIDER=anthropic)
-                                                └──▶ Ollama local  (LLM_PROVIDER=ollama)
+                              ├─▶ llm_client.py ──▶ Anthropic API  (LLM_PROVIDER=anthropic)
+                              │                 └──▶ Ollama local  (LLM_PROVIDER=ollama)
+                              │                         │
+                              │                         ▼ (si el modelo pide una tool)
+                              └─▶ tools.py ──▶ Open-Meteo (clima) / job_queue (recordatorios)
 ```
 
 ## Cómo correrlo
@@ -36,7 +42,6 @@ Telegram (usuario) ──▶ main.py (bot handler)
 
 Este proyecto está pensado para crecer por versiones, cada una funcional antes de pasar a la siguiente:
 
-- **V2 — Tools**: function calling real (recordatorios, clima, y posiblemente control de PC reutilizando ideas de [wol-remote-pc-control](https://github.com/Alejo3119/wol-remote-pc-control)).
 - **V3 — Multi-proveedor ampliado**: sumar OpenAI además de Anthropic/Ollama, seleccionable en runtime.
 - **V4 — Generación de imágenes**: como una tool más que el agente puede invocar.
 - **V5 — RAG**: consultar documentos/notas propias como fuente de contexto.
