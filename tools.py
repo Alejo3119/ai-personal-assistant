@@ -4,6 +4,8 @@ import urllib.parse
 
 import requests
 
+import rag
+
 TOOLS = [
     {
         "name": "get_weather",
@@ -26,6 +28,17 @@ TOOLS = [
                 "minutes": {"type": "number", "description": "En cuantos minutos avisar"},
             },
             "required": ["text", "minutes"],
+        },
+    },
+    {
+        "name": "search_notes",
+        "description": "Busca en las notas/documentos personales del usuario informacion relevante a una consulta.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Que buscar en las notas del usuario"},
+            },
+            "required": ["query"],
         },
     },
     {
@@ -85,6 +98,13 @@ def set_reminder(text: str, minutes: float, ctx: dict) -> str:
     return f"Recordatorio programado para dentro de {minutes} minutos: {text}"
 
 
+def search_notes(query: str) -> str:
+    results = rag.search(query)
+    if not results:
+        return "No se encontraron notas relevantes (o todavia no hay documentos indexados)."
+    return "\n\n".join(f"[{source}]: {text}" for source, text in results)
+
+
 def generate_image(prompt: str, ctx: dict) -> str:
     encoded_prompt = urllib.parse.quote(prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?nologo=true"
@@ -99,6 +119,8 @@ def execute_tool(name: str, args: dict, ctx: dict) -> str:
         return get_weather(args["city"])
     if name == "set_reminder":
         return set_reminder(args["text"], args["minutes"], ctx)
+    if name == "search_notes":
+        return search_notes(args["query"])
     if name == "generate_image":
         return generate_image(args["prompt"], ctx)
     return f"Herramienta desconocida: {name}"

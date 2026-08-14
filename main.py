@@ -14,6 +14,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
 import memory
+import rag
 from llm_client import generate_response, LLM_PROVIDER
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -63,6 +64,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     memory.init_db()
+    indexed = rag.build_index()
+    logger.info("Indice de notas (RAG) reconstruido: %s fragmentos", indexed)
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("Bot iniciado, esperando mensajes...")

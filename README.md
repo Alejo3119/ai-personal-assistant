@@ -2,7 +2,7 @@
 
 Un asistente conversacional personal, accesible por Telegram, con memoria persistente entre sesiones. Pensado como proyecto de aprendizaje incremental: cada etapa agrega una capacidad real (proveedores de IA, herramientas/acciones, multi-agente, RAG, MCP) sobre una base que ya funciona de punta a punta.
 
-## Estado actual: V4 — Tools + generación de imágenes
+## Estado actual: V5 — Tools + imágenes + RAG
 
 - Bot de Telegram como interfaz (sin frontend propio).
 - Memoria persistente por chat en SQLite (recuerda la conversación entre mensajes y reinicios del bot).
@@ -11,8 +11,9 @@ Un asistente conversacional personal, accesible por Telegram, con memoria persis
   - `get_weather` — clima actual vía Open-Meteo (sin API key).
   - `set_reminder` — recordatorio con entrega asíncrona real vía `job_queue` de Telegram, sin que el usuario vuelva a escribir.
   - `generate_image` — genera y envía una imagen (Pollinations.ai, sin API key) a partir de una descripción.
+  - `search_notes` — RAG sobre archivos propios (`documents/*.md`, `*.txt`): busca por similitud semántica usando embeddings locales de Ollama (`nomic-embed-text`) guardados en SQLite, sin base de datos vectorial externa.
 
-Nota sobre offline: el modelo local (Ollama) corre sin internet, pero Telegram es un servicio en la nube — la interfaz del bot y las tools de clima/imágenes sí necesitan conexión.
+Nota sobre offline: el modelo local (Ollama) corre sin internet, pero Telegram es un servicio en la nube — la interfaz del bot y las tools de clima/imágenes sí necesitan conexión. `search_notes` sí funciona 100% offline si `LLM_PROVIDER=ollama` (embeddings y modelo, ambos locales).
 
 ## Arquitectura
 
@@ -27,7 +28,12 @@ Telegram (usuario) ──▶ main.py (bot handler)
                               │                         │
                               │                         ▼ (si el modelo pide una tool)
                               └─▶ tools.py ──▶ Open-Meteo (clima) / job_queue (recordatorios) / Pollinations.ai (imagenes)
+                                            └──▶ rag.py ──▶ documents/*.md,*.txt + embeddings Ollama ──▶ SQLite
 ```
+
+### Notas personales (RAG)
+
+Poné tus propios archivos `.md` o `.txt` en la carpeta `documents/` (se crea sola, y está en `.gitignore` — tus notas nunca se suben al repo). Se indexan automáticamente cada vez que arranca el bot.
 
 ## Cómo correrlo
 
@@ -46,7 +52,6 @@ Telegram (usuario) ──▶ main.py (bot handler)
 
 Este proyecto está pensado para crecer por versiones, cada una funcional antes de pasar a la siguiente:
 
-- **V5 — RAG**: consultar documentos/notas propias como fuente de contexto.
 - **V6 — Multi-agente**: separar responsabilidades (recordatorios, clima, imágenes) en agentes especializados coordinados por un orquestador.
 - **V7 — MCP**: exponer las tools como servidor MCP (Model Context Protocol) para que otros clientes MCP puedan usarlas.
 
