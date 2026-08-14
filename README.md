@@ -2,6 +2,8 @@
 
 Un asistente conversacional personal, accesible por Telegram, con memoria persistente entre sesiones. Pensado como proyecto de aprendizaje incremental: cada etapa agrega una capacidad real (proveedores de IA, herramientas/acciones, multi-agente, RAG, MCP) sobre una base que ya funciona de punta a punta.
 
+> **Nota:** este proyecto fue desarrollado con la asistencia de IA (Claude, de Anthropic) como par de programación — la arquitectura, el alcance por etapas y las pruebas en vivo de cada version fueron dirigidas por mí, con la IA ayudando en la implementación y la depuración.
+
 ## Estado actual: V5 — Tools + imágenes + RAG
 
 - Bot de Telegram como interfaz (sin frontend propio).
