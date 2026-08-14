@@ -34,7 +34,12 @@ def make_tool_ctx(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> dict:
             reminder_callback, when=minutes * 60, chat_id=chat_id, data=text
         )
 
-    return {"schedule_reminder": schedule_reminder}
+    def send_image(image_bytes: bytes, caption: str):
+        context.application.create_task(
+            context.bot.send_photo(chat_id=chat_id, photo=image_bytes, caption=caption[:1024])
+        )
+
+    return {"schedule_reminder": schedule_reminder, "send_image": send_image}
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):

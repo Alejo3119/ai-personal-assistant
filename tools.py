@@ -1,5 +1,7 @@
 """Herramientas (tools) que el asistente puede invocar por su cuenta."""
 
+import urllib.parse
+
 import requests
 
 TOOLS = [
@@ -26,6 +28,20 @@ TOOLS = [
             "required": ["text", "minutes"],
         },
     },
+    {
+        "name": "generate_image",
+        "description": "Genera y envia una imagen a partir de una descripcion en texto.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Descripcion de la imagen a generar, preferiblemente en ingles para mejor calidad",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
 ]
 
 
@@ -36,7 +52,8 @@ def to_anthropic_format():
     ]
 
 
-def to_ollama_format():
+def to_openai_format():
+    """Formato estandar de function calling que usan tanto OpenAI como Ollama."""
     return [
         {"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["parameters"]}}
         for t in TOOLS
@@ -68,9 +85,20 @@ def set_reminder(text: str, minutes: float, ctx: dict) -> str:
     return f"Recordatorio programado para dentro de {minutes} minutos: {text}"
 
 
+def generate_image(prompt: str, ctx: dict) -> str:
+    encoded_prompt = urllib.parse.quote(prompt)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?nologo=true"
+    resp = requests.get(url, timeout=60)
+    resp.raise_for_status()
+    ctx["send_image"](resp.content, prompt)
+    return f"Imagen generada y enviada al usuario: {prompt}"
+
+
 def execute_tool(name: str, args: dict, ctx: dict) -> str:
     if name == "get_weather":
         return get_weather(args["city"])
     if name == "set_reminder":
         return set_reminder(args["text"], args["minutes"], ctx)
+    if name == "generate_image":
+        return generate_image(args["prompt"], ctx)
     return f"Herramienta desconocida: {name}"

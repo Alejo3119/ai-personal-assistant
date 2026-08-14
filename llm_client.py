@@ -26,7 +26,9 @@ SYSTEM_PROMPT = (
     "agregues detalles que no esten ahi (por ejemplo, no inventes si esta soleado o "
     "nublado si la herramienta no lo dice). Nunca menciones tu fecha de corte de "
     "entrenamiento ni digas que tu informacion podria estar desactualizada cuando "
-    "acabas de usar una herramienta con datos en vivo."
+    "acabas de usar una herramienta con datos en vivo. Si el usuario pide una imagen, "
+    "usa la herramienta generate_image: la imagen se le envia directamente al usuario, "
+    "vos no la ves, asi que no intentes describirla, solo confirma que la enviaste."
 )
 
 
@@ -69,7 +71,7 @@ def _run_ollama(history: list[dict], tool_ctx: dict | None) -> str:
     for _ in range(MAX_TOOL_ITERATIONS):
         resp = requests.post(
             "http://localhost:11434/api/chat",
-            json={"model": model, "messages": messages, "tools": tools.to_ollama_format(), "stream": False},
+            json={"model": model, "messages": messages, "tools": tools.to_openai_format(), "stream": False},
             timeout=120,
         )
         resp.raise_for_status()
@@ -94,7 +96,52 @@ def _run_ollama(history: list[dict], tool_ctx: dict | None) -> str:
     return "No pude completar la accion, intenta de nuevo."
 
 
+def _run_openai(history: list[dict], tool_ctx: dict | None) -> str:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + list(history)
+
+    for _ in range(MAX_TOOL_ITERATIONS):
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools.to_openai_format(),
+        )
+        message = response.choices[0].message
+        logger.info("openai tool_calls=%s content=%r", message.tool_calls, message.content)
+
+        if not message.tool_calls:
+            return message.content or ""
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in message.tool_calls
+                ],
+            }
+        )
+        for tc in message.tool_calls:
+            args = json.loads(tc.function.arguments)
+            logger.info("tool_call name=%s args=%s", tc.function.name, args)
+            result = tools.execute_tool(tc.function.name, args, tool_ctx or {})
+            logger.info("tool_result=%s", result)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+    return "No pude completar la accion, intenta de nuevo."
+
+
 def generate_response(history: list[dict], tool_ctx: dict | None = None) -> str:
     if LLM_PROVIDER == "ollama":
         return _run_ollama(history, tool_ctx)
+    if LLM_PROVIDER == "openai":
+        return _run_openai(history, tool_ctx)
     return _run_anthropic(history, tool_ctx)
